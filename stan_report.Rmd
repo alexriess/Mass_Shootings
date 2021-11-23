@@ -1,0 +1,147 @@
+---
+title: "Report"
+author: "Alex Riess"
+date: "18/06/2021"
+output: html_document
+params:
+  start: "1966-08-01"
+  end:  "2016-06-26"
+  state: "Texas"
+  place: "any"
+  target: TRUE
+  motive: FALSE
+---
+
+```#{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning-FALSE)
+```
+
+```{r setup, include=FALSE}
+library(rio)
+library(sf)
+library(ggplot2)
+library(ggmap)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(ggrepel)
+library(gridExtra)
+# remotes::install_github('Chrisjb/basemapR')
+library(basemapR)
+sms <- import("~/Documents/armstrong_interactive_viz/Lab3/stanford_mass_shooting.dta")
+sms$date <- as.Date(as.character(sms$date),
+                    format="%m/%d/%Y")
+
+# read in the state geography file
+st <-st_read("cb_2020_us_state_20m/cb_2020_us_state_20m.shp")
+st <- st %>% filter(NAME %in% params$state)
+
+#using the start and end data as defaults
+sdate <- as.Date(as.character(params$start),
+                 format="%Y-%m-%d")
+edate <- as.Date(as.character(params$end),
+                 format="%Y-%m-%d")
+
+# talk about later
+# generate place type filter
+place_filt <- switch(params$place,
+                     school = sch_search,
+                     workplace = work_search,
+                     gov = gov_search,
+                     res = res_search,
+                     pub = pub_search,
+                     any = "")
+
+#filter mass shooting data for the state we want
+# and the date ranges we want
+sms <- sms %>%
+  filter(state == params$state) %>%
+  filter(date >= sdate & date <= edate)
+
+if(params$place != "any"){
+  sms <- sms %>% filter(place_type %in% place_filt)
+}
+
+# making observation variable
+# changing mass shooting data into spatial data
+sms <- sms %>% mutate(obs = 1:n())
+sms_sf = st_as_sf(sms, coords = c("longitude", "latitude"),
+                 crs = 'WGS84')
+
+```
+
+
+```{r echo=FALSE}
+
+# gets copied into 
+# output$map in shiny
+bbox <- expand_bbox(st_bbox(st), X = 0, Y = 0)
+
+#creating the map
+map <- ggplot() +
+  base_map(bbox, increase_zoom = 3, basemap = 'google') +
+  geom_sf(data = sms_sf, inherit.aes = FALSE) +
+  geom_text_repel(data=sms_sf, aes(x=st_coordinates(sms_sf)[,1],
+                                   y=st_coordinates(sms_sf)[,2],
+                                   label=obs),
+                  max.overlaps=500) +
+  coord_sf(datum = NA,
+           xlim = c(bbox['xmin'], bbox['xmax']),
+           ylim = c(bbox['ymin'], bbox['ymax'])) +
+  theme_minimal() +
+  labs(caption = 'map data \uA9 2020 Google', x="", y="")
+
+```
+
+```{r echo=FALSE}
+tmp <- sms_sf %>%
+  as.data.frame() %>%
+  select(numberofcivilianfatalities, numberofcivilianinjured) %>%
+  mutate(obs = 1:n()) %>%
+  pivot_longer(-obs, names_to="type", values_to="vals") %>%
+  mutate(type = case_when(type == "numberofcivilianfatalities" ~ "Killed", TRUE ~ "Injured"))
+histo <- ggplot(tmp, aes(x=vals, fill=type)) +
+  geom_histogram(position="identity", alpha=.25) +
+  theme_classic() +
+  labs(x="Number of Victims", y="Count", fill="") +
+  theme(legend.position=c(.8,.8), aspect.ratio=1)
+
+```
+
+```{r echo=FALSE, out.width="100%"}
+grid.arrange(map, histo, widths=c(5,4), nrow=1)
+
+```
+
+```{r echo=FALSE, out.width="100%"}
+
+# gets transformed into 
+# output$tab1 and output$tab2 in shiny 
+if(params$target){
+sms_sf %>%
+  as.data.frame() %>%
+  select(obs, targetedvictimsdetailed) %>%
+  kable(col.names=c("ID", "Target Detail"))
+}
+
+if(params$motive){
+sms_sf %>%
+  as.data.frame() %>%
+  select(obs, possiblemotivedetailed) %>%
+  kable(col.names=c("ID", "Possible Motive Detail"))
+}
+
+```
+
+```{r}
+params <- reactive({
+  list(
+    inpState=input$state,
+    start= ...,
+    
+  )
+})
+
+params()$inpState
+```
+

@@ -1,0 +1,318 @@
+---
+title: "Mass Shooting Application"
+author: "Alex Riess"
+date: "18/06/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(shiny)
+
+# Define UI for application that draws a histogram
+ui <- fluidPage(
+
+    # Application title
+    titlePanel("Stanford Mass Shooting Data"),
+
+    # Sidebar with a slider input for number of bins
+    sidebarLayout(
+        sidebarPanel(width=3,
+          actionButton("browser", "browser"),
+          uiOutput("state_sel"),
+          uiOutput("date_input"),
+          radioButtons("place", "Place of Event",
+                      c("Any" = "any",
+                        "School" = "school",
+                        "Workplace" = "workplace",
+                        "Government Facility" = "gov",
+                        "Private Residence" = "res",
+                        "Public Place" = "pub"),
+                      selected = "any"),
+          checkboxInput("target", "Target Detail", value=TRUE),
+          checkboxInput("motive", "Possible Motive Detail", value=TRUE),
+          downloadButton("report", "Generate report")
+        ),
+
+        # Show a plot of the generated distribution
+        mainPanel(
+          textOutput("no_data"),
+          fluidRow(
+            column(6, plotOutput("map")),
+            column(6, plotOutput("histo"))),
+           dataTableOutput("tab1"),
+           dataTableOutput("tab2")
+
+
+        )
+    )
+)
+```
+
+```{r}
+# Define server logic required to draw a histogram
+server <- function(input, output) {
+  library(rio)
+  library(sf)
+  library(DT)
+  library(ggplot2)
+  library(ggmap)
+  library(dplyr)
+  library(tidyr)
+  library(knitr)
+  library(ggrepel)
+  library(crosstalk)
+  library(gridExtra)
+  # remotes::install_github('Chrisjb/basemapR')
+  library(basemapR)
+  observeEvent(input$browser,{
+    browser()
+  })
+  sch_search <- c("College/University/Adult education",
+                  "Primary school",
+                  "Secondary school",
+                  "Secondary School",
+                  "Retail/ Wholesale/Services facility and Primary school")
+
+  work_search <- c(
+    "Company/Factory/Office",
+    "Government facility",
+    "Military facility",
+    "Residential home/Neighborhood, Retail/ Wholesale/Services facility",
+    "Restaurant/cafe",
+    "Restaurant/Cafe",
+    "Restaurant/Cafe?",
+    "Restaurant/Cafeé",
+    "Retail/ Wholesale/Services facility",
+    "Retail/ Wholesale/Services facility and Primary school",
+    "Retail/Wholesale/Services facility",
+    "Retail/Wholesale/Services facility /Residential home/Neighborhood")
+
+  gov_search <- c(
+    "Government facility",
+    "Military facility")
+
+  res_search <- c(
+    "Residential home",
+    "Residential home/Neighborhood",
+    "Residential Home/Neighborhood",
+    "Residential home/Neighborhood and Street/Highway",
+    "Residential home/Neighborhood, Retail/ Wholesale/Services facility",
+    "Retail/Wholesale/Services facility /Residential home/Neighborhood")
+
+  pub_search <- c(
+    "Park/Wilderness",
+    "Park/Wildness",
+    "Public transportation",
+    "Public Transportation",
+    "Residential home/Neighborhood and Street/Highway",
+    "Street/Highway")
+
+  sms <- import("stanford_mass_shooting.dta")
+
+  sms$date <- as.Date(as.character(sms$date),
+                      format="%m/%d/%Y")
+  st <-st_read("cb_2020_us_state_20m/cb_2020_us_state_20m.shp")
+
+  output$date_input <- renderUI({
+    dateRangeInput(
+    "dates",
+    "Choose Dates",
+    start = min(sms$date),
+    end = max(sms$date),
+    min = min(sms$date),
+    max = max(sms$date),
+    format = "yyyy-mm-dd",
+    startview = "month",
+    weekstart = 0,
+    language = "en",
+    separator = " to ",
+    width = NULL,
+    autoclose = TRUE)
+  })
+
+  output$state_sel <- renderUI({
+    chc <- sort(unique(sms$state))
+    selectInput("state", "Choose a State",
+                choices=chc,
+                multiple=FALSE)
+  })
+
+## reactive state geography dataset
+  st_tmp <- reactive({
+    req(input$state)
+    st %>% filter(NAME %in% input$state)
+  })
+
+  place_filt <- reactive({
+    req(input$place)
+    switch(input$place,
+       school = sch_search,
+       workplace = work_search,
+       gov = gov_search,
+       res = res_search,
+       pub = pub_search)
+  })
+
+  sdate <- reactive({as.character(input$dates[1])})
+  edate <- reactive({as.character(input$dates[2])})
+
+
+  sms_tmp <- reactive({
+    req(input$state)
+    req(input$dates)
+    req(input$place)
+    x <- sms %>%
+    filter(state == input$state) %>%
+    filter(date >= input$dates[1] & date <= input$dates[2])
+    if(input$place != "any"){
+      x <- x %>% filter(placetype %in% place_filt())
+    }
+    if(nrow(x) > 0){
+      x <- x %>% mutate(obs= 1:n())
+    }
+    x
+  })
+
+
+  output$no_data <- renderText({
+    if(nrow(sms_sf()) == 0){
+      "No Data to Plot"
+    }else{
+      NULL
+    }
+  })
+
+  sms_sf = reactive({
+    st_as_sf(sms_tmp(), coords = c("longitude", "latitude"),
+                    crs = 'WGS84')
+  })
+
+
+
+
+  output$map <- renderPlot({
+    req(sms_sf())
+    if(nrow(sms_sf()) > 0){
+    bbox <- expand_bbox(st_bbox(st_tmp()), X = 0, Y = 0)
+    ggplot() +
+    base_map(bbox, increase_zoom = 3, basemap = 'google') +
+    geom_sf(data = sms_sf(), inherit.aes = FALSE) +
+    geom_text_repel(data=sms_sf(), aes(x=st_coordinates(sms_sf())[,1],
+                                     y=st_coordinates(sms_sf())[,2],
+                                     label=obs),
+                    max.overlaps=500) +
+    coord_sf(datum = NA,
+             xlim = c(bbox['xmin'], bbox['xmax']),
+             ylim = c(bbox['ymin'], bbox['ymax'])) +
+    theme_minimal() +
+    labs(caption = 'map data \uA9 2020 Google', x="", y="")
+    }
+  })
+  output$histo <- renderPlot({
+    if(nrow(sms_sf()) > 0){
+    tmp <- sms_sf() %>%
+      as.data.frame() %>%
+      select(numberofcivilianfatalities, numberofcivilianinjured) %>%
+      mutate(obs = 1:n()) %>%
+      pivot_longer(-obs, names_to="type", values_to="vals") %>%
+      mutate(type = case_when(type == "numberofcivilianfatalities" ~ "Killed", TRUE ~ "Injured"))
+    ggplot(tmp, aes(x=vals, fill=type)) +
+      geom_histogram(position="identity", alpha=.25, bins=5) +
+      theme_classic() +
+      labs(x="Number of Victims", y="Count", fill="") +
+      theme(legend.position=c(.8,.8), aspect.ratio=1)
+    }
+  })
+
+  output$tab1 <- renderDataTable({
+    req(input$target)
+    if(input$target & nrow(sms_sf()) > 0){
+    sms_sf() %>%
+      as.data.frame() %>%
+      select(obs, targetedvictimsdetailed) %>%
+      datatable()
+    }else{
+      NULL
+    }
+  })
+  output$tab2 <- renderDataTable({
+    req(input$motive)
+    if(input$motive & nrow(sms_sf()) > 0){
+    sms_sf() %>%
+      as.data.frame() %>%
+      select(obs, possiblemotivedetailed) %>%
+      datatable()
+    }else{
+      NULL
+    }
+  })
+
+  params <- reactive({
+    list(
+      start = as.character(sdate()),
+      end = as.character(edate()),
+      state = input$state,
+      place = input$place,
+      target = input$target,
+      motive = input$motive
+    )
+  })
+  output$report <- downloadHandler(
+    filename = "report.html",
+    content = function(file) {
+      tempReport <- file.path(tempdir(), "report.Rmd")
+      file.copy("report.Rmd", tempReport, overwrite = TRUE)
+
+      params <-list(
+          start = as.character(sdate()),
+          end = as.character(edate()),
+          state = input$state,
+          place = input$place,
+          target = input$target,
+          motive = input$motive)
+
+      rmarkdown::render(tempReport,
+                        output_file = file,
+                        output_format = "html_document",
+                        params=params,
+                        envir = new.env(parent = globalenv()))
+
+    }
+  )
+
+}
+
+```
+
+```{r}
+# Run the application
+shinyApp(ui = ui, server = server)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
