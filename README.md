@@ -1,6 +1,6 @@
-An application, based on the stanford mass shootings data, that has:
+An interactive application, based on the stanford mass shootings data, that has:
 
-1) A ggplot map that shows shootins in the US
+1) A ggplot map that shows shootings in the US
 
 2) A ggplot histogram that shows number of civilians killed and injured
 
