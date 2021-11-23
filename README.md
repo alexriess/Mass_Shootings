@@ -16,9 +16,7 @@ An application, based on the stanford mass shootings data, that has:
 
 
 
-
-
-
+<img width="1792" alt="Screen Shot 2021-11-23 at 12 34 14 AM" src="https://user-images.githubusercontent.com/93554638/142978718-076a5438-2cc7-496e-9749-565397f477d3.png">
 
 
 
